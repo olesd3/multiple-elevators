@@ -17,16 +17,21 @@ type HallOrderMsg struct {
 	HallOrder Order
 }
 
-func MasterRoutine(hallBtnRx chan elevio.ButtonEvent, stateRx chan StateMsg, hallOrderTx chan HallOrderMsg) {
+func MasterRoutine(hallBtnRx chan elevio.ButtonEvent, singleStateRx chan StateMsg, hallOrderTx chan HallOrderMsg, AllStatesTx chan [numElev]ElevState) {
+
+	go bcast.Receiver(HallOrderRawBTN_PORT, hallBtnRx)
+	go bcast.Receiver(SingleElevatorState_PORT, singleStateRx)
+	go bcast.Transmitter(HallOrder_PORT, hallOrderTx)
+	go bcast.Transmitter(AllStates_PORT, AllStatesTx)
 
 	// Define an array of elevator states for continously monitoring the elevators
 	// It will be updated whenever we receive a new state from the slaves
 	var allStates [numElev]ElevState
 	uninitializedOrderArray := []Order{
 		{
-			floor:     0,
-			direction: up,   // Replace with your OrderDirection constant (e.g., Up or Down)
-			orderType: hall, // Replace with your OrderType constant (e.g., Hall or Cab)
+			Floor:     0,
+			Direction: up,   // Replace with your OrderDirection constant (e.g., Up or Down)
+			OrderType: hall, // Replace with your OrderType constant (e.g., Hall or Cab)
 		},
 	}
 	uninitialized_ElevState := ElevState{
@@ -67,21 +72,10 @@ func MasterRoutine(hallBtnRx chan elevio.ButtonEvent, stateRx chan StateMsg, hal
 			HallOrderMessage := HallOrderMsg{bestElevator, btnPressToOrder(a)}
 			fmt.Printf("HallOrderMsg sent: %v\n", HallOrderMessage)
 
-			// Serialize hallOrdersAndId using go
-			/*
-				var b bytes.Buffer
-				enc := gob.NewEncoder(&b)
-				if err := enc.Encode(HallOrderMsg); err != nil {
-					fmt.Println("Error encoding HallOrderMsg:", err)
-					return
-				}
-				// Send the serialized hallOrder over the channel
-			*/
-
 			hallOrderTx <- HallOrderMessage
 
 			fmt.Printf("CodeExcecutionEnd - hallBtnRx in MasterRoutine\n")
-		case a := <-stateRx:
+		case a := <-singleStateRx:
 			// Update our list of allStates with the new state
 
 			allStates[a.Id] = a.State
@@ -91,37 +85,6 @@ func MasterRoutine(hallBtnRx chan elevio.ButtonEvent, stateRx chan StateMsg, hal
 
 func PrimaryRoutine() {
 
-}
-
-func InitializeNetwork(role string, id int, hallOrderRx chan HallOrderMsg, hallBtnTx chan elevio.ButtonEvent, singleStateTx chan StateMsg) {
-	// NETWORK CHANNELS (For all)
-
-	// Receive orders from master
-	go bcast.Receiver(HallOrder_PORT, hallOrderRx)
-
-	// Transmit raw hall buttons
-	go bcast.Transmitter(HallOrderRawBTN_PORT, hallBtnTx)
-
-	// Transmit elevator states
-	go bcast.Transmitter(SingleElevatorState_PORT, singleStateTx)
-
-	// Role-specific logic
-	switch role {
-	case "Master":
-		hallOrderTx := make(chan HallOrderMsg)
-		go bcast.Transmitter(HallOrder_PORT, hallOrderTx)
-
-		hallBtnRx := make(chan elevio.ButtonEvent)
-		go bcast.Receiver(HallOrderRawBTN_PORT, hallBtnRx)
-
-		singleStateRx := make(chan StateMsg)
-		go bcast.Receiver(SingleElevatorState_PORT, singleStateRx)
-
-		go MasterRoutine(hallBtnRx, singleStateRx, hallOrderTx)
-	case "Primary":
-		// Placeholder for Primary-specific logic
-	}
-	fmt.Println("Network initialized.")
 }
 
 func PrintButtonEvent(event elevio.ButtonEvent) {
@@ -142,7 +105,7 @@ func PrintButtonEvent(event elevio.ButtonEvent) {
 // Cost function for assigning an order to an elevator.
 func calculateCost(elevator ElevState, order Order) float64 {
 	// Base cost is the absolute distance from the elevator to the order
-	cost := math.Abs(float64(order.floor - elevator.Floor))
+	cost := math.Abs(float64(order.Floor - elevator.Floor))
 
 	// If elevator is idle, prioritize it
 	if elevator.Behavior == "idle" {
@@ -150,14 +113,14 @@ func calculateCost(elevator ElevState, order Order) float64 {
 	}
 
 	// If moving in the same direction and order is on the way, lower cost
-	if (elevator.Direction == "up" && order.direction == 1 && order.floor >= elevator.Floor) ||
-		(elevator.Direction == "down" && order.direction == -1 && order.floor <= elevator.Floor) {
+	if (elevator.Direction == "up" && order.Direction == 1 && order.Floor >= elevator.Floor) ||
+		(elevator.Direction == "down" && order.Direction == -1 && order.Floor <= elevator.Floor) {
 		cost *= 0.8 // Favor elevators already moving toward the order
 	}
 
 	// If moving in the opposite direction, penalize cost
-	if (elevator.Direction == "up" && order.direction == -1) ||
-		(elevator.Direction == "down" && order.direction == 1) {
+	if (elevator.Direction == "up" && order.Direction == -1) ||
+		(elevator.Direction == "down" && order.Direction == 1) {
 		cost *= 1.5 // Penalize opposite direction
 	}
 
